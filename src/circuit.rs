@@ -204,3 +204,5 @@ mod tests {
         assert_eq!(result, Err(CircuitError::EmptyLayer));
     }
 }
+
+// TODO Phase 3: Implement validation

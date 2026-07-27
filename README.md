@@ -82,16 +82,16 @@ Layer 2: (a + b) * (c + d)
 
 ## Roadmap
 
-- [ ] Finite-field integration
-- [ ] Layered circuit data model
-- [ ] Layer metadata and padding
-- [ ] Circuit validation
-- [ ] Circuit evaluation
-- [ ] Witness storage
-- [ ] Multilinear extension utilities
-- [ ] Wiring predicate MLEs
-- [ ] Sumcheck integration
-- [ ] Transcript support
-- [ ] GKR prover
-- [ ] GKR verifier
+- Finite-field integration ✔️
+- Layered circuit data model ✔️
+- Layer metadata and padding ✔️
+- Circuit validation
+- Circuit evaluation
+- Witness storage
+- Multilinear extension utilities
+- Wiring predicate MLEs
+- Sumcheck integration
+- Transcript support
+- GKR prover
+- GKR verifier
 ```
