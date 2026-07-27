@@ -1,15 +1,14 @@
 use ark_bn254::Fr;
-use ark_ff::{Field, PrimeField, Zero, One, BigInteger};
-
 pub type F = Fr;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ark_ff::{BigInteger, Field, One, PrimeField, Zero};
 
     #[test]
     fn add_then_subtract_returns_original() {
-        // test: (a + b) - b = a 
+        // test: (a + b) - b = a
         let a = F::from(7u64);
         let b = F::from(11u64);
 
@@ -75,7 +74,7 @@ mod tests {
         let c = F::from(15u64);
 
         let lhs = a * (b + c);
-        let rhs = a*b + a*c;
+        let rhs = a * b + a * c;
 
         assert_eq!(lhs, rhs);
         print!("lhs is {} and rhs is: {}", lhs, rhs);

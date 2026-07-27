@@ -85,7 +85,7 @@ Layer 2: (a + b) * (c + d)
 - Finite-field integration ✔️
 - Layered circuit data model ✔️
 - Layer metadata and padding ✔️
-- Circuit validation
+- Circuit validation ✔️
 - Circuit evaluation
 - Witness storage
 - Multilinear extension utilities
@@ -94,4 +94,3 @@ Layer 2: (a + b) * (c + d)
 - Transcript support
 - GKR prover
 - GKR verifier
-```
