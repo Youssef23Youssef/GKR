@@ -365,4 +365,163 @@ mod tests {
 
         assert_eq!(result, Err(CircuitError::EmptyLayer));
     }
+
+    // Test Circuit Validation
+
+    fn layer(gates: Vec<Gate>) -> Layer {
+        Layer::new(gates).unwrap()
+    }
+
+    fn target_circuit() -> Circuit {
+        Circuit {
+            layers: vec![
+                layer(vec![
+                    Gate::Input { input_index: 0 },
+                    Gate::Input { input_index: 1 },
+                    Gate::Input { input_index: 2 },
+                    Gate::Input { input_index: 3 },
+                ]),
+                layer(vec![
+                    Gate::Add { left: 0, right: 1 },
+                    Gate::Add { left: 2, right: 3 },
+                ]),
+                layer(vec![Gate::Mul { left: 0, right: 1 }]),
+            ],
+            expected_inputs: 4,
+        }
+    }
+
+    #[test]
+    fn valid_target_circuit_passes_validation() {
+        let circuit = target_circuit();
+
+        assert_eq!(circuit.validate(), Ok(()));
+    }
+
+    #[test]
+    fn circuit_with_only_one_layer_is_rejected() {
+        let circuit = Circuit {
+            layers: vec![layer(vec![Gate::Input { input_index: 0 }])],
+            expected_inputs: 1,
+        };
+
+        assert_eq!(circuit.validate(), Err(CircuitError::NotEnoughLayers));
+    }
+
+    #[test]
+    fn input_layer_must_contain_only_input_gates() {
+        let circuit = Circuit {
+            layers: vec![
+                layer(vec![Gate::Add { left: 0, right: 0 }]),
+                layer(vec![Gate::Mul { left: 0, right: 0 }]),
+            ],
+            expected_inputs: 1,
+        };
+
+        assert_eq!(circuit.validate(), Err(CircuitError::InvalidInputLayer));
+    }
+
+    #[test]
+    fn input_layer_width_must_match_expected_inputs() {
+        let circuit = Circuit {
+            layers: vec![
+                layer(vec![
+                    Gate::Input { input_index: 0 },
+                    Gate::Input { input_index: 1 },
+                ]),
+                layer(vec![Gate::Add { left: 0, right: 1 }]),
+            ],
+            expected_inputs: 3,
+        };
+
+        assert_eq!(
+            circuit.validate(),
+            Err(CircuitError::WrongInputCount {
+                expected: 3,
+                actual: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn input_gate_must_reference_existing_input() {
+        let circuit = Circuit {
+            layers: vec![
+                layer(vec![
+                    Gate::Input { input_index: 0 },
+                    Gate::Input { input_index: 2 },
+                ]),
+                layer(vec![Gate::Add { left: 0, right: 1 }]),
+            ],
+            expected_inputs: 2,
+        };
+
+        assert_eq!(
+            circuit.validate(),
+            Err(CircuitError::InvalidInputIndex {
+                gate: 1,
+                input_index: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn computation_layers_must_not_contain_input_gates() {
+        let circuit = Circuit {
+            layers: vec![
+                layer(vec![Gate::Input { input_index: 0 }]),
+                layer(vec![Gate::Input { input_index: 0 }]),
+            ],
+            expected_inputs: 1,
+        };
+
+        assert_eq!(
+            circuit.validate(),
+            Err(CircuitError::InvalidComputationGate { layer: 1, gate: 0 })
+        );
+    }
+
+    #[test]
+    fn child_indices_must_reference_previous_real_width() {
+        let circuit = Circuit {
+            layers: vec![
+                layer(vec![
+                    Gate::Input { input_index: 0 },
+                    Gate::Input { input_index: 1 },
+                    Gate::Input { input_index: 2 },
+                ]),
+                layer(vec![Gate::Add { left: 0, right: 3 }]),
+            ],
+            expected_inputs: 3,
+        };
+
+        assert_eq!(
+            circuit.validate(),
+            Err(CircuitError::InvalidChildIndex {
+                layer: 1,
+                gate: 0,
+                child: 3,
+            })
+        );
+    }
+
+    #[test]
+    fn final_layer_must_have_exactly_one_real_gate() {
+        let circuit = Circuit {
+            layers: vec![
+                layer(vec![
+                    Gate::Input { input_index: 0 },
+                    Gate::Input { input_index: 1 },
+                ]),
+                layer(vec![
+                    Gate::Add { left: 0, right: 1 },
+                    Gate::Mul { left: 0, right: 1 },
+                ]),
+            ],
+            expected_inputs: 2,
+        };
+
+        assert_eq!(circuit.validate(), Err(CircuitError::InvalidOutputLayer));
+    }
 }
+
