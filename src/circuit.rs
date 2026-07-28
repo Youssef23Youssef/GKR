@@ -739,4 +739,114 @@ mod tests {
         assert_eq!(circuit.validate(), Err(CircuitError::InvalidOutputLayer));
     }
 
+    // Test Circuit Evaluation
+
+    #[test]
+    fn target_circuit_evaluates_expected_output() {
+        let circuit = target_circuit();
+        let inputs = vec![F::from(2u64), F::from(3u64), F::from(5u64), F::from(7u64)];
+
+        let evaluation = circuit.evaluate(&inputs).unwrap();
+
+        assert_eq!(evaluation.output(), F::from(60u64));
+    }
+
+    #[test]
+    fn target_circuit_stores_all_layer_values() {
+        let circuit = target_circuit();
+        let inputs = vec![F::from(2u64), F::from(3u64), F::from(5u64), F::from(7u64)];
+
+        let evaluation = circuit.evaluate(&inputs).unwrap();
+        let layer_values = evaluation.layer_values();
+
+        assert_eq!(layer_values.len(), 3);
+        assert_eq!(
+            layer_values[0],
+            vec![F::from(2u64), F::from(3u64), F::from(5u64), F::from(7u64),]
+        );
+        assert_eq!(layer_values[1], vec![F::from(5u64), F::from(12u64)]);
+        assert_eq!(layer_values[2], vec![F::from(60u64)]);
+    }
+
+    #[test]
+    fn evaluation_keeps_padded_positions_zero() {
+        let circuit = Circuit::new(
+            vec![
+                layer(vec![
+                    Gate::Input { input_index: 0 },
+                    Gate::Input { input_index: 1 },
+                    Gate::Input { input_index: 2 },
+                    Gate::Input { input_index: 3 },
+                    Gate::Input { input_index: 4 },
+                    Gate::Input { input_index: 5 },
+                ]),
+                layer(vec![
+                    Gate::Add { left: 0, right: 1 },
+                    Gate::Add { left: 2, right: 3 },
+                    Gate::Add { left: 4, right: 5 },
+                ]),
+                layer(vec![Gate::Mul { left: 0, right: 2 }]),
+            ],
+            6,
+        )
+        .unwrap();
+
+        let inputs = vec![
+            F::from(1u64),
+            F::from(2u64),
+            F::from(3u64),
+            F::from(4u64),
+            F::from(5u64),
+            F::from(6u64),
+        ];
+
+        let evaluation = circuit.evaluate(&inputs).unwrap();
+        let layer_values = evaluation.layer_values();
+
+        assert_eq!(layer_values[1].len(), 4);
+        assert_eq!(layer_values[1][0], F::from(3u64));
+        assert_eq!(layer_values[1][1], F::from(7u64));
+        assert_eq!(layer_values[1][2], F::from(11u64));
+        assert_eq!(layer_values[1][3], F::zero());
+        assert_eq!(evaluation.output(), F::from(33u64));
+    }
+
+    #[test]
+    fn evaluation_rejects_wrong_input_count() {
+        let circuit = target_circuit();
+        let inputs = vec![F::from(2u64), F::from(3u64), F::from(5u64)];
+
+        assert_eq!(
+            circuit.evaluate(&inputs),
+            Err(CircuitError::WrongInputCount {
+                expected: 4,
+                actual: 3,
+            })
+        );
+    }
+
+    #[test]
+    fn evaluation_rejects_invalid_circuit() {
+        let circuit = Circuit {
+            layers: vec![
+                layer(vec![
+                    Gate::Input { input_index: 0 },
+                    Gate::Input { input_index: 1 },
+                ]),
+                layer(vec![Gate::Add { left: 0, right: 2 }]),
+            ],
+            expected_inputs: 2,
+        };
+
+        let inputs = vec![F::from(2u64), F::from(3u64)];
+
+        assert_eq!(
+            circuit.evaluate(&inputs),
+            Err(CircuitError::InvalidChildIndex {
+                layer: 1,
+                gate: 0,
+                child: 2,
+            })
+        );
+    }
 }
