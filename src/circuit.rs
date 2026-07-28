@@ -1,4 +1,5 @@
 use crate::field::F;
+use ark_ff::Zero;
 
 /// A gate in a layered arithmetic circuit.
 ///
@@ -81,6 +82,11 @@ pub enum CircuitError {
         expected: usize,
         actual: usize,
     },
+
+    InvalidInputGateOrder {
+        gate: usize,
+        input_index: usize,
+    },
 }
 
 /// The result of evaluating a circuit over the chosen finite field.
@@ -100,6 +106,16 @@ pub enum CircuitError {
 pub struct CircuitEvaluation {
     layer_values: Vec<Vec<F>>,
     output: F,
+}
+
+impl CircuitEvaluation {
+    pub fn output(&self) -> F {
+        self.output
+    }
+
+    pub fn layer_values(&self) -> &[Vec<F>] {
+        &self.layer_values
+    }
 }
 
 /// A single layer of gates in a layered arithmetic circuit.
@@ -208,6 +224,17 @@ pub struct Circuit {
 }
 
 impl Circuit {
+    pub fn new(layers: Vec<Layer>, expected_inputs: usize) -> Result<Self, CircuitError> {
+        let circuit = Self {
+            layers,
+            expected_inputs,
+        };
+
+        circuit.validate()?;
+
+        Ok(circuit)
+    }
+
     pub fn validate(&self) -> Result<(), CircuitError> {
         // 1. Validate circuit shape:
         // Check that the circuit has at least two layers:
@@ -241,6 +268,13 @@ impl Circuit {
                 Gate::Input { input_index } => {
                     if *input_index >= self.expected_inputs {
                         return Err(CircuitError::InvalidInputIndex {
+                            gate: gate_index,
+                            input_index: *input_index,
+                        });
+                    }
+
+                    if *input_index != gate_index {
+                        return Err(CircuitError::InvalidInputGateOrder {
                             gate: gate_index,
                             input_index: *input_index,
                         });
@@ -300,6 +334,83 @@ impl Circuit {
         }
 
         Ok(())
+    }
+
+    pub fn evaluate(&self, inputs: &[F]) -> Result<CircuitEvaluation, CircuitError> {
+        self.validate()?;
+
+        if inputs.len() != self.expected_inputs {
+            return Err(CircuitError::WrongInputCount {
+                expected: self.expected_inputs,
+                actual: inputs.len(),
+            });
+        }
+
+        // Allocate the evaluated value vector for the input layer using the padded layer width.
+        // Real input gate values will be written into the first `real_width` positions
+        // while any extra padded positions remain zero.
+        //
+        // This invariant is important for later GKR/MLE code:
+        // `layer_values[i].len() == layers[i].padded_width`.
+        let input_layer = &self.layers[0];
+        let mut input_values = vec![F::zero(); input_layer.padded_width];
+
+        for (gate_index, gate) in input_layer.gates.iter().enumerate() {
+            match gate {
+                Gate::Input { input_index } => {
+                    input_values[gate_index] = inputs[*input_index];
+                }
+
+                _ => unreachable!("validate() ensures layer 0 contains only input gates"),
+            }
+        }
+
+        let mut layer_values = Vec::new();
+        layer_values.push(input_values);
+
+        // Evaluate each computation layer from inputs toward the output.
+        //
+        // Every computation layer gets its own padded value vector. Real gates are
+        // evaluated from the immediately previous layer, while padded positions remain
+        // zero. Saving each padded vector gives the prover the full layer-by-layer
+        // witness needed later by GKR.
+        for layer_index in 1..self.layers.len() {
+            let current_layer = &self.layers[layer_index];
+            let previous_values = layer_values
+                .last()
+                .expect("there is always a previous evaluated layer");
+
+            let mut current_values = vec![F::zero(); current_layer.padded_width];
+
+            for (gate_index, gate) in current_layer.gates.iter().enumerate() {
+                match gate {
+                    Gate::Add { left, right } => {
+                        current_values[gate_index] =
+                            previous_values[*left] + previous_values[*right];
+                    }
+
+                    Gate::Mul { left, right } => {
+                        current_values[gate_index] =
+                            previous_values[*left] * previous_values[*right];
+                    }
+
+                    Gate::Input { .. } => {
+                        unreachable!("validate() ensures computation layers contain no input gates")
+                    }
+                }
+            }
+
+            layer_values.push(current_values);
+        }
+
+        let output = layer_values
+            .last()
+            .expect("validate() ensures the circuit has an output layer")[0];
+
+        Ok(CircuitEvaluation {
+            layer_values,
+            output,
+        })
     }
 }
 
@@ -396,6 +507,110 @@ mod tests {
         let circuit = target_circuit();
 
         assert_eq!(circuit.validate(), Ok(()));
+    }
+
+    #[test]
+    fn target_circuit_layer_widths_are_correct() {
+        let circuit = target_circuit();
+
+        assert_eq!(circuit.layers[0].real_width, 4);
+        assert_eq!(circuit.layers[0].padded_width, 4);
+        assert_eq!(circuit.layers[0].index_bits, 2);
+
+        assert_eq!(circuit.layers[1].real_width, 2);
+        assert_eq!(circuit.layers[1].padded_width, 2);
+        assert_eq!(circuit.layers[1].index_bits, 1);
+
+        assert_eq!(circuit.layers[2].real_width, 1);
+        assert_eq!(circuit.layers[2].padded_width, 1);
+        assert_eq!(circuit.layers[2].index_bits, 0);
+    }
+
+    #[test]
+    fn empty_computation_layer_is_rejected_by_validation() {
+        let circuit = Circuit {
+            layers: vec![
+                layer(vec![Gate::Input { input_index: 0 }]),
+                Layer {
+                    gates: vec![],
+                    real_width: 0,
+                    padded_width: 1,
+                    index_bits: 0,
+                },
+            ],
+            expected_inputs: 1,
+        };
+
+        assert_eq!(circuit.validate(), Err(CircuitError::EmptyLayer));
+    }
+
+    #[test]
+    fn invalid_real_width_is_rejected_by_validation() {
+        let circuit = Circuit {
+            layers: vec![
+                Layer {
+                    gates: vec![Gate::Input { input_index: 0 }],
+                    real_width: 2,
+                    padded_width: 2,
+                    index_bits: 1,
+                },
+                layer(vec![Gate::Add { left: 0, right: 0 }]),
+            ],
+            expected_inputs: 1,
+        };
+
+        assert_eq!(
+            circuit.validate(),
+            Err(CircuitError::InvalidRealWidth { layer: 0 })
+        );
+    }
+
+    #[test]
+    fn invalid_padded_width_is_rejected_by_validation() {
+        let circuit = Circuit {
+            layers: vec![
+                Layer {
+                    gates: vec![
+                        Gate::Input { input_index: 0 },
+                        Gate::Input { input_index: 1 },
+                    ],
+                    real_width: 2,
+                    padded_width: 3,
+                    index_bits: 1,
+                },
+                layer(vec![Gate::Add { left: 0, right: 1 }]),
+            ],
+            expected_inputs: 2,
+        };
+
+        assert_eq!(
+            circuit.validate(),
+            Err(CircuitError::InvalidPaddedWidth { layer: 0 })
+        );
+    }
+
+    #[test]
+    fn invalid_index_bits_are_rejected_by_validation() {
+        let circuit = Circuit {
+            layers: vec![
+                Layer {
+                    gates: vec![
+                        Gate::Input { input_index: 0 },
+                        Gate::Input { input_index: 1 },
+                    ],
+                    real_width: 2,
+                    padded_width: 2,
+                    index_bits: 2,
+                },
+                layer(vec![Gate::Add { left: 0, right: 1 }]),
+            ],
+            expected_inputs: 2,
+        };
+
+        assert_eq!(
+            circuit.validate(),
+            Err(CircuitError::InvalidIndexBits { layer: 0 })
+        );
     }
 
     #[test]
@@ -523,5 +738,5 @@ mod tests {
 
         assert_eq!(circuit.validate(), Err(CircuitError::InvalidOutputLayer));
     }
-}
 
+}
