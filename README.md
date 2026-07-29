@@ -86,7 +86,7 @@ Layer 2: (a + b) * (c + d)
 - Layered circuit data model ✔️
 - Layer metadata and padding ✔️
 - Circuit validation ✔️
-- Circuit evaluation
+- Circuit evaluation ✔️
 - Witness storage
 - Multilinear extension utilities
 - Wiring predicate MLEs
