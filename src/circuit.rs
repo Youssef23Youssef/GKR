@@ -76,8 +76,6 @@ pub enum CircuitError {
         child: usize,
     },
 
-    InvalidOutputLayer,
-
     WrongInputCount {
         expected: usize,
         actual: usize,
@@ -99,18 +97,18 @@ pub enum CircuitError {
 /// - Each inner vector is padded to that layer's `padded_width`.
 /// - Real gate outputs occupy the first `real_width` positions.
 /// - Padded positions are filled with zero.
-/// - `output` is the value at index 0 of the final layer.
+/// - `outputs` contains the real values from the final layer.
 ///
 /// These evaluated layer values will later become the GKR prover's witness.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CircuitEvaluation {
     layer_values: Vec<Vec<F>>,
-    output: F,
+    outputs: Vec<F>,
 }
 
 impl CircuitEvaluation {
-    pub fn output(&self) -> F {
-        self.output
+    pub fn outputs(&self) -> &[F] {
+        &self.outputs
     }
 
     pub fn layer_values(&self) -> &[Vec<F>] {
@@ -216,8 +214,7 @@ impl Layer {
 /// - `expected_inputs` is the exact number of public input values expected by
 ///   the input layer.
 ///
-/// For the basic GKR version, the final layer should contain exactly one real
-/// output gate.
+/// The final layer may contain one or more real output gates.
 pub struct Circuit {
     layers: Vec<Layer>,
     expected_inputs: usize,
@@ -285,14 +282,6 @@ impl Circuit {
                     return Err(CircuitError::InvalidInputLayer);
                 }
             }
-        }
-
-        // 4. Validate output layer:
-        // - The final layer must contain exactly one real output gate.
-        let last_layer = self.layers.last().unwrap();
-
-        if last_layer.real_width != 1 {
-            return Err(CircuitError::InvalidOutputLayer);
         }
 
         // 5. Validate computation layers:
@@ -403,13 +392,20 @@ impl Circuit {
             layer_values.push(current_values);
         }
 
-        let output = layer_values
+        let final_layer = self
+            .layers
             .last()
-            .expect("validate() ensures the circuit has an output layer")[0];
+            .expect("validate() ensures the circuit has an output layer");
+
+        let final_values = layer_values
+            .last()
+            .expect("validate() ensures the circuit has an output layer");
+
+        let outputs = final_values[..final_layer.real_width].to_vec();
 
         Ok(CircuitEvaluation {
             layer_values,
-            output,
+            outputs,
         })
     }
 }
@@ -721,22 +717,37 @@ mod tests {
     }
 
     #[test]
-    fn final_layer_must_have_exactly_one_real_gate() {
-        let circuit = Circuit {
-            layers: vec![
+    fn final_layer_may_have_multiple_outputs() {
+        let circuit = Circuit::new(
+            vec![
                 layer(vec![
                     Gate::Input { input_index: 0 },
                     Gate::Input { input_index: 1 },
+                    Gate::Input { input_index: 2 },
+                    Gate::Input { input_index: 3 },
                 ]),
                 layer(vec![
                     Gate::Add { left: 0, right: 1 },
-                    Gate::Mul { left: 0, right: 1 },
+                    Gate::Mul { left: 2, right: 3 },
                 ]),
             ],
-            expected_inputs: 2,
-        };
+            4,
+        )
+        .unwrap();
 
-        assert_eq!(circuit.validate(), Err(CircuitError::InvalidOutputLayer));
+        let inputs = vec![
+            F::from(2u64),
+            F::from(3u64),
+            F::from(5u64),
+            F::from(7u64),
+        ];
+
+        let evaluation = circuit.evaluate(&inputs).unwrap();
+
+        assert_eq!(
+            evaluation.outputs(),
+            &[F::from(5u64), F::from(35u64)]
+        );
     }
 
     // Test Circuit Evaluation
@@ -748,7 +759,7 @@ mod tests {
 
         let evaluation = circuit.evaluate(&inputs).unwrap();
 
-        assert_eq!(evaluation.output(), F::from(60u64));
+        assert_eq!(evaluation.outputs(), &[F::from(60u64)]);
     }
 
     #[test]
@@ -808,7 +819,7 @@ mod tests {
         assert_eq!(layer_values[1][1], F::from(7u64));
         assert_eq!(layer_values[1][2], F::from(11u64));
         assert_eq!(layer_values[1][3], F::zero());
-        assert_eq!(evaluation.output(), F::from(33u64));
+        assert_eq!(evaluation.outputs(), &[F::from(33u64)]);
     }
 
     #[test]
