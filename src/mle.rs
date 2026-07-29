@@ -134,3 +134,77 @@ pub fn bits_to_index(bits: &[bool]) -> Result<usize, MleError> {
 
     Ok(index)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn num_vars_for_len_accepts_power_of_two_lengths() {
+        assert_eq!(num_vars_for_len(1), Ok(0));
+        assert_eq!(num_vars_for_len(2), Ok(1));
+        assert_eq!(num_vars_for_len(4), Ok(2));
+        assert_eq!(num_vars_for_len(8), Ok(3));
+    }
+
+    #[test]
+    fn num_vars_for_len_rejects_zero_length() {
+        assert_eq!(num_vars_for_len(0), Err(MleError::EmptyEvaluationTable));
+    }
+
+    #[test]
+    fn num_vars_for_len_rejects_non_power_of_two_lengths() {
+        assert_eq!(
+            num_vars_for_len(3),
+            Err(MleError::EvaluationTableLengthNotPowerOfTwo { len: 3 })
+        );
+        assert_eq!(
+            num_vars_for_len(6),
+            Err(MleError::EvaluationTableLengthNotPowerOfTwo { len: 6 })
+        );
+    }
+
+    #[test]
+    fn index_to_bits_handles_zero_variable_constant_case() {
+        assert_eq!(index_to_bits(0, 0), Ok(vec![]));
+    }
+
+    #[test]
+    fn index_to_bits_uses_little_endian_order() {
+        assert_eq!(index_to_bits(0, 2), Ok(vec![false, false]));
+        assert_eq!(index_to_bits(1, 2), Ok(vec![true, false]));
+        assert_eq!(index_to_bits(2, 2), Ok(vec![false, true]));
+        assert_eq!(index_to_bits(3, 2), Ok(vec![true, true]));
+    }
+
+    #[test]
+    fn index_to_bits_rejects_index_outside_hypercube() {
+        assert_eq!(
+            index_to_bits(4, 2),
+            Err(MleError::IndexOutOfRange {
+                index: 4,
+                num_bits: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn bits_to_index_uses_little_endian_order() {
+        assert_eq!(bits_to_index(&[false, false]), Ok(0));
+        assert_eq!(bits_to_index(&[true, false]), Ok(1));
+        assert_eq!(bits_to_index(&[false, true]), Ok(2));
+        assert_eq!(bits_to_index(&[true, true]), Ok(3));
+    }
+
+    #[test]
+    fn bit_index_conversion_round_trips() {
+        for num_bits in 0..6 {
+            let domain_size = 1usize << num_bits;
+
+            for index in 0..domain_size {
+                let bits = index_to_bits(index, num_bits).unwrap();
+                assert_eq!(bits_to_index(&bits), Ok(index));
+            }
+        }
+    }
+}
