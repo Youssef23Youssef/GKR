@@ -13,9 +13,9 @@ The first milestone focuses on building the foundations required by the protocol
 - layered arithmetic circuit representation
 - circuit validation
 - circuit evaluation over field elements
-- storage of all evaluated layer values as the prover witness
+- multilinear-extension utilities over padded layer evaluations
 
-The implementation starts with a simple, explicit protocol model before moving toward multilinear extensions, Sumcheck integration, and the full GKR prover/verifier flow.
+The implementation starts with a simple, explicit protocol model before moving toward Sumcheck integration and the full GKR prover/verifier flow.
 
 ## Current scope
 
@@ -47,6 +47,37 @@ The GKR protocol later works in the opposite direction, reducing claims from the
 - Gates may reference only real positions, not padded positions.
 - Padding positions evaluate to zero.
 - The final layer must contain exactly one real output gate.
+
+Multilinear-extension convention
+Each evaluated layer is stored as a padded vector of field values. This vector is interpreted as evaluations of a multilinear polynomial over a Boolean hypercube.
+This project uses little-endian Boolean indexing:
+
+```text
+index 0 -> [0, 0]
+index 1 -> [1, 0]
+index 2 -> [0, 1]
+index 3 -> [1, 1]
+```
+So for a layer vector:
+
+```text
+values = [2, 3, 5, 7]
+```
+we interpret it as:
+
+```text
+V(0, 0) = 2
+V(1, 0) = 3
+V(0, 1) = 5
+V(1, 1) = 7
+```
+The first Boolean variable is the least-significant bit of the vector index. This convention makes variable binding/folding straightforward:
+
+```text
+bind x₀ = r:
+new[j] = (1 - r) * old[2j] + r * old[2j + 1]
+```
+This indexing convention must be used consistently by MLE evaluation, wiring predicates, Sumcheck, and GKR.
 
 ## Initial target circuit
 

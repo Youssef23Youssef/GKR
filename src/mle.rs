@@ -1,27 +1,30 @@
-//! Multilinear-extension utilities.
-//!
-//! This module starts with the indexing convention that every later MLE,
-//! wiring-predicate, Sumcheck, and GKR function must agree on.
-//!
-//! We use **little-endian Boolean indexing**:
-//!
-//! ```text
-//! index 0 -> [false, false]  // 00₂
-//! index 1 -> [true,  false]  // 01₂
-//! index 2 -> [false, true ]  // 10₂
-//! index 3 -> [true,  true ]  // 11₂
-//! ```
-//!
-//! In other words, the first Boolean variable is the least-significant bit of
-//! the vector index. This matches the folding rule we will use later for MLEs:
-//!
-//! ```text
-//! bind x₀ = r:
-//! new[j] = (1 - r) * old[2j] + r * old[2j + 1]
-//! ```
-//!
-//! Being explicit here matters because a mismatched bit order would make layer
-//! MLEs and wiring predicates silently disagree.
+use crate::field::F;
+use ark_ff::{One, Zero};
+
+// Multilinear-extension utilities.
+//
+// This module starts with the indexing convention that every later MLE,
+// wiring-predicate, Sumcheck, and GKR function must agree on.
+//
+// We use **little-endian Boolean indexing**:
+//
+// ```text
+// index 0 -> [false, false]  // 00₂
+// index 1 -> [true,  false]  // 01₂
+// index 2 -> [false, true ]  // 10₂
+// index 3 -> [true,  true ]  // 11₂
+// ```
+//
+// In other words, the first Boolean variable is the least-significant bit of
+// the vector index. This matches the folding rule we will use later for MLEs:
+//
+// ```text
+// bind x₀ = r:
+// new[j] = (1 - r) * old[2j] + r * old[2j + 1]
+//```
+//
+// Being explicit here matters because a mismatched bit order would make layer
+// MLEs and wiring predicates silently disagree.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MleError {
@@ -39,6 +42,11 @@ pub enum MleError {
     /// The requested number of Boolean variables is too large to safely map
     /// into a `usize` index on this machine.
     TooManyVariables { num_bits: usize },
+
+    PointLengthMismatch {
+        expected: usize,
+        actual: usize,
+    },
 }
 
 /// Return the number of Boolean variables needed for an evaluation table.
@@ -135,9 +143,52 @@ pub fn bits_to_index(bits: &[bool]) -> Result<usize, MleError> {
     Ok(index)
 }
 
+/// Evaluates the multilinear equality polynomial at `(point, bits)`.
+///
+/// The input `point` is a field point `x ∈ F^n`, while `bits` is a Boolean
+/// hypercube point `b ∈ {0,1}^n`.
+///
+/// The polynomial is defined as:
+///
+/// ```text
+/// eq(x, b) = ∏ᵢ (bᵢ xᵢ + (1 - bᵢ)(1 - xᵢ))
+/// ```
+///
+/// Since each `bᵢ` is Boolean, each factor is either `xᵢ` when `bᵢ = 1`,
+/// or `1 - xᵢ` when `bᵢ = 0`.
+///
+/// On Boolean inputs, `eq` acts as an indicator polynomial: it evaluates to
+/// `1` when the two Boolean points are equal, and `0` otherwise.
+pub fn eq(point: &[F], bits: &[bool]) -> Result<F, MleError> {
+    if point.len() != bits.len() {
+        return Err(MleError::PointLengthMismatch {
+            expected: bits.len(),
+            actual: point.len(),
+        });
+    }
+
+    let one = F::one();
+
+    let mut result = F::one();
+
+    for (x_i, b_i) in point.iter().zip(bits.iter()) {
+        let factor = if *b_i {
+            *x_i
+        } else {
+            one - *x_i
+        };
+
+        result *= factor;
+    }
+
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Helpers tests
 
     #[test]
     fn num_vars_for_len_accepts_power_of_two_lengths() {
@@ -206,5 +257,49 @@ mod tests {
                 assert_eq!(bits_to_index(&bits), Ok(index));
             }
         }
+    }
+
+    // `eq()` tests 
+
+    #[test]
+    fn eq_of_empty_points_is_one() {
+        assert_eq!(eq(&[], &[]), Ok(F::one()));
+    }
+
+    #[test]
+    fn eq_is_one_when_boolean_points_match() {
+        let point = vec![F::zero(), F::one()];
+
+        assert_eq!(eq(&point, &[false, true]), Ok(F::one()));
+    }
+
+    #[test]
+    fn eq_is_zero_when_boolean_points_do_not_match() {
+        let point = vec![F::one(), F::one()];
+
+        assert_eq!(eq(&point, &[false, true]), Ok(F::zero()));
+    }
+
+    #[test]
+    fn eq_uses_one_minus_x_for_false_bits() {
+        let r = F::from(7u64);
+        let s = F::from(11u64);
+
+        let point = vec![r, s];
+
+        assert_eq!(eq(&point, &[false, true]), Ok((F::one() - r) * s));
+    }
+
+    #[test]
+    fn eq_rejects_length_mismatch() {
+        let point = vec![F::from(7u64)];
+
+        assert_eq!(
+            eq(&point, &[true, false]),
+            Err(MleError::PointLengthMismatch {
+                expected: 2,
+                actual: 1,
+            })
+        );
     }
 }
