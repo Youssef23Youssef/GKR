@@ -184,6 +184,40 @@ pub fn eq(point: &[F], bits: &[bool]) -> Result<F, MleError> {
     Ok(result)
 }
 
+/// Evaluates the multilinear extension defined by a Boolean-hypercube table.
+///
+/// `values` contains the evaluations of a multilinear polynomial over
+/// `{0,1}^n`, using this module's little-endian indexing convention.
+///
+/// Given a field point `point ∈ F^n`, this computes:
+///
+/// ```text
+/// Ṽ(point) = Σ_b values[b] · eq(point, b)
+/// ```
+///
+/// where the sum ranges over all Boolean points `b ∈ {0,1}^n`.
+pub fn evaluate_mle(values: &[F], point: &[F]) -> Result<F, MleError> {
+    let num_vars = num_vars_for_len(values.len())?;
+
+    if point.len() != num_vars {
+        return Err(MleError::PointLengthMismatch {
+            expected: num_vars,
+            actual: point.len(),
+        });
+    }
+
+    let mut result = F::zero();
+
+    for (index, value) in values.iter().enumerate() {
+        let bits = index_to_bits(index, num_vars)?;
+        let weight = eq(point, &bits)?;
+
+        result += *value * weight;
+    }
+
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,6 +334,90 @@ mod tests {
                 expected: 2,
                 actual: 1,
             })
+        );
+    }
+
+    // Evaluating MLE
+
+    #[test]
+    fn evaluate_mle_handles_constant_table() {
+        let values = vec![F::from(7u64)];
+        let point = vec![];
+
+        assert_eq!(evaluate_mle(&values, &point), Ok(F::from(7u64)));
+    }
+
+    #[test]
+    fn evaluate_mle_matches_one_variable_boolean_points() {
+        let values = vec![F::from(5u64), F::from(12u64)];
+
+        assert_eq!(evaluate_mle(&values, &[F::zero()]), Ok(F::from(5u64)));
+        assert_eq!(evaluate_mle(&values, &[F::one()]), Ok(F::from(12u64)));
+    }
+
+    #[test]
+    fn evaluate_mle_interpolates_one_variable_table() {
+        let values = vec![F::from(5u64), F::from(12u64)];
+        let r = F::from(9u64);
+
+        let expected = F::from(5u64) * (F::one() - r) + F::from(12u64) * r;
+
+        assert_eq!(evaluate_mle(&values, &[r]), Ok(expected));
+    }
+
+    #[test]
+    fn evaluate_mle_matches_two_variable_boolean_points() {
+        let values = vec![
+            F::from(2u64),
+            F::from(3u64),
+            F::from(5u64),
+            F::from(7u64),
+        ];
+
+        assert_eq!(
+            evaluate_mle(&values, &[F::zero(), F::zero()]),
+            Ok(F::from(2u64))
+        );
+        assert_eq!(
+            evaluate_mle(&values, &[F::one(), F::zero()]),
+            Ok(F::from(3u64))
+        );
+        assert_eq!(
+            evaluate_mle(&values, &[F::zero(), F::one()]),
+            Ok(F::from(5u64))
+        );
+        assert_eq!(
+            evaluate_mle(&values, &[F::one(), F::one()]),
+            Ok(F::from(7u64))
+        );
+    }
+
+    #[test]
+    fn evaluate_mle_rejects_point_length_mismatch() {
+        let values = vec![
+            F::from(2u64),
+            F::from(3u64),
+            F::from(5u64),
+            F::from(7u64),
+        ];
+
+        assert_eq!(
+            evaluate_mle(&values, &[F::from(9u64)]),
+            Err(MleError::PointLengthMismatch {
+                expected: 2,
+                actual: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn evaluate_mle_rejects_non_power_of_two_table() {
+        let values = vec![F::from(2u64), F::from(3u64), F::from(5u64)];
+        let point = vec![F::from(9u64)];
+
+        assert_eq!(
+            evaluate_mle(&values, &point),
+            Err(MleError::EvaluationTableLengthNotPowerOfTwo { len: 3 })
         );
     }
 }
