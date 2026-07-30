@@ -260,6 +260,62 @@ pub fn bind_variable(values: &[F], r: F) -> Result<Vec<F>, MleError> {
     Ok(bound_values)
 }
 
+/// Evaluates the affine line through `p0` and `p1` at parameter `t`.
+///
+/// The line is defined coordinate-wise as:
+///
+/// ```text
+/// line(t) = p0 + t · (p1 - p0)
+/// ```
+///
+/// Therefore:
+///
+/// ```text
+/// line(0) = p0
+/// line(1) = p1
+/// ```
+///
+/// Both endpoints must have the same dimension.
+pub fn affine_line(p0: &[F], p1: &[F], t: F) -> Result<Vec<F>, MleError> {
+    if p0.len() != p1.len() {
+        return Err(MleError::PointLengthMismatch {
+            expected: p0.len(),
+            actual: p1.len(),
+        });
+    }
+
+    let point = p0
+        .iter()
+        .zip(p1.iter())
+        .map(|(p0_i, p1_i)| *p0_i + t * (*p1_i - *p0_i))
+        .collect();
+
+    Ok(point)
+}
+
+/// Evaluates an MLE restricted to the affine line through `p0` and `p1`.
+///
+/// This computes:
+///
+/// ```text
+/// q(t) = Ṽ(p0 + t · (p1 - p0))
+/// ```
+///
+/// where `Ṽ` is the multilinear extension represented by `values`.
+///
+/// This is the line-restriction step used later in GKR to combine two child
+/// claims into one next-layer claim.
+pub fn evaluate_mle_on_line(
+    values: &[F],
+    p0: &[F],
+    p1: &[F],
+    t: F,
+) -> Result<F, MleError> {
+    let point = affine_line(p0, p1, t)?;
+
+    evaluate_mle(values, &point)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -539,6 +595,108 @@ mod tests {
         assert_eq!(
             bind_variable(&values, F::from(9u64)),
             Err(MleError::NoVariablesToBind)
+        );
+    }
+
+    // Affine line tests
+    #[test]
+    fn affine_line_at_zero_returns_first_endpoint() {
+        let p0 = vec![F::from(2u64), F::from(5u64)];
+        let p1 = vec![F::from(8u64), F::from(17u64)];
+
+        assert_eq!(affine_line(&p0, &p1, F::zero()), Ok(p0));
+    }
+
+    #[test]
+    fn affine_line_at_one_returns_second_endpoint() {
+        let p0 = vec![F::from(2u64), F::from(5u64)];
+        let p1 = vec![F::from(8u64), F::from(17u64)];
+
+        assert_eq!(affine_line(&p0, &p1, F::one()), Ok(p1));
+    }
+
+    #[test]
+    fn affine_line_interpolates_coordinate_wise() {
+        let p0 = vec![F::from(2u64), F::from(5u64)];
+        let p1 = vec![F::from(8u64), F::from(17u64)];
+        let t = F::from(3u64);
+
+        let expected = vec![
+            F::from(2u64) + t * (F::from(8u64) - F::from(2u64)),
+            F::from(5u64) + t * (F::from(17u64) - F::from(5u64)),
+        ];
+
+        assert_eq!(affine_line(&p0, &p1, t), Ok(expected));
+    }
+
+    #[test]
+    fn affine_line_rejects_endpoint_length_mismatch() {
+        let p0 = vec![F::from(2u64), F::from(5u64)];
+        let p1 = vec![F::from(8u64)];
+
+        assert_eq!(
+            affine_line(&p0, &p1, F::from(3u64)),
+            Err(MleError::PointLengthMismatch {
+                expected: 2,
+                actual: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn evaluate_mle_on_line_at_zero_matches_first_endpoint_evaluation() {
+        let values = vec![
+            F::from(2u64),
+            F::from(3u64),
+            F::from(5u64),
+            F::from(7u64),
+        ];
+
+        let p0 = vec![F::zero(), F::zero()];
+        let p1 = vec![F::one(), F::one()];
+
+        assert_eq!(
+            evaluate_mle_on_line(&values, &p0, &p1, F::zero()),
+            Ok(F::from(2u64))
+        );
+    }
+
+    #[test]
+    fn evaluate_mle_on_line_at_one_matches_second_endpoint_evaluation() {
+        let values = vec![
+            F::from(2u64),
+            F::from(3u64),
+            F::from(5u64),
+            F::from(7u64),
+        ];
+
+        let p0 = vec![F::zero(), F::zero()];
+        let p1 = vec![F::one(), F::one()];
+
+        assert_eq!(
+            evaluate_mle_on_line(&values, &p0, &p1, F::one()),
+            Ok(F::from(7u64))
+        );
+    }
+
+    #[test]
+    fn evaluate_mle_on_line_matches_evaluate_mle_at_line_point() {
+        let values = vec![
+            F::from(2u64),
+            F::from(3u64),
+            F::from(5u64),
+            F::from(7u64),
+        ];
+
+        let p0 = vec![F::zero(), F::zero()];
+        let p1 = vec![F::one(), F::one()];
+        let t = F::from(3u64);
+
+        let line_point = affine_line(&p0, &p1, t).unwrap();
+
+        assert_eq!(
+            evaluate_mle_on_line(&values, &p0, &p1, t),
+            evaluate_mle(&values, &line_point)
         );
     }
 }
