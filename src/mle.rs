@@ -47,6 +47,7 @@ pub enum MleError {
         expected: usize,
         actual: usize,
     },
+    NoVariablesToBind,
 }
 
 /// Return the number of Boolean variables needed for an evaluation table.
@@ -216,6 +217,47 @@ pub fn evaluate_mle(values: &[F], point: &[F]) -> Result<F, MleError> {
     }
 
     Ok(result)
+}
+
+/// Binds the first variable of an MLE evaluation table to `r`.
+///
+/// The table uses little-endian indexing, so the first variable `x₀` is the
+/// least-significant index bit. Therefore, entries that differ only in `x₀`
+/// are adjacent:
+///
+/// ```text
+/// old[0] with old[1]
+/// old[2] with old[3]
+/// old[4] with old[5]
+/// ...
+/// ```
+///
+/// For each pair, this computes the one-variable interpolation:
+///
+/// ```text
+/// new[j] = (1 - r) * old[2j] + r * old[2j + 1]
+/// ```
+///
+/// The returned table has half the length and represents the original MLE with
+/// `x₀` fixed to `r`.
+pub fn bind_variable(values: &[F], r: F) -> Result<Vec<F>, MleError> {
+    let num_vars = num_vars_for_len(values.len())?;
+
+    if num_vars == 0 {
+        return Err(MleError::NoVariablesToBind);
+    }
+
+    let one_minus_r = F::one() - r;
+    let mut bound_values = Vec::with_capacity(values.len() / 2);
+
+    for pair in values.chunks_exact(2) {
+        let left = pair[0];
+        let right = pair[1];
+
+        bound_values.push(one_minus_r * left + r * right);
+    }
+
+    Ok(bound_values)
 }
 
 #[cfg(test)]
@@ -418,6 +460,85 @@ mod tests {
         assert_eq!(
             evaluate_mle(&values, &point),
             Err(MleError::EvaluationTableLengthNotPowerOfTwo { len: 3 })
+        );
+    }
+
+    // Bind variable tests
+    #[test]
+    fn bind_variable_folds_two_value_table() {
+        let values = vec![F::from(5u64), F::from(12u64)];
+        let r = F::from(9u64);
+
+        let expected = vec![(F::one() - r) * F::from(5u64) + r * F::from(12u64)];
+
+        assert_eq!(bind_variable(&values, r), Ok(expected));
+    }
+
+    #[test]
+    fn bind_variable_at_zero_selects_even_indices() {
+        let values = vec![
+            F::from(2u64),
+            F::from(3u64),
+            F::from(5u64),
+            F::from(7u64),
+        ];
+
+        assert_eq!(
+            bind_variable(&values, F::zero()),
+            Ok(vec![F::from(2u64), F::from(5u64)])
+        );
+    }
+
+    #[test]
+    fn bind_variable_at_one_selects_odd_indices() {
+        let values = vec![
+            F::from(2u64),
+            F::from(3u64),
+            F::from(5u64),
+            F::from(7u64),
+        ];
+
+        assert_eq!(
+            bind_variable(&values, F::one()),
+            Ok(vec![F::from(3u64), F::from(7u64)])
+        );
+    }
+
+    #[test]
+    fn bind_variable_interpolates_adjacent_pairs() {
+        let values = vec![
+            F::from(2u64),
+            F::from(3u64),
+            F::from(5u64),
+            F::from(7u64),
+        ];
+        let r = F::from(11u64);
+
+        let expected = vec![
+            (F::one() - r) * F::from(2u64) + r * F::from(3u64),
+            (F::one() - r) * F::from(5u64) + r * F::from(7u64),
+        ];
+
+        assert_eq!(bind_variable(&values, r), Ok(expected));
+    }
+
+    #[test]
+    fn bind_variable_rejects_non_power_of_two_table() {
+        let values = vec![F::from(2u64), F::from(3u64), F::from(5u64)];
+
+        assert_eq!(
+            bind_variable(&values, F::from(9u64)),
+            Err(MleError::EvaluationTableLengthNotPowerOfTwo { len: 3 })
+        );
+    }
+
+    #[test]
+    fn bind_variable_rejects_constant_table() {
+        let values = vec![F::from(7u64)];
+
+        assert_eq!(
+            bind_variable(&values, F::from(9u64)),
+            Err(MleError::NoVariablesToBind)
         );
     }
 }
