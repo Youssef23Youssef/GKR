@@ -163,3 +163,145 @@ pub fn evaluate_mul_predicate(
         GateOperation::Mul,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_ff::Zero;
+
+    fn f(value: u64) -> F {
+        F::from(value)
+    }
+
+    fn layer(gates: Vec<Gate>) -> Layer {
+        Layer::new(gates).unwrap()
+    }
+
+    fn target_layers() -> (Layer, Layer, Layer) {
+        let layer0 = layer(vec![
+            Gate::Input { input_index: 0 },
+            Gate::Input { input_index: 1 },
+            Gate::Input { input_index: 2 },
+            Gate::Input { input_index: 3 },
+        ]);
+
+        let layer1 = layer(vec![
+            Gate::Add { left: 0, right: 1 },
+            Gate::Add { left: 2, right: 3 },
+        ]);
+
+        let layer2 = layer(vec![Gate::Mul { left: 0, right: 1 }]);
+
+        (layer0, layer1, layer2)
+    }
+
+    #[test]
+    fn add_predicate_matches_boolean_wiring_points() {
+        let (layer0, layer1, _) = target_layers();
+
+        assert_eq!(
+            evaluate_add_predicate(&layer0, &layer1, &[f(0)], &[f(0), f(0)], &[f(1), f(0)]),
+            Ok(f(1))
+        );
+
+        assert_eq!(
+            evaluate_add_predicate(&layer0, &layer1, &[f(1)], &[f(0), f(1)], &[f(1), f(1)]),
+            Ok(f(1))
+        );
+
+        assert_eq!(
+            evaluate_add_predicate(&layer0, &layer1, &[f(0)], &[f(1), f(0)], &[f(0), f(0)]),
+            Ok(F::zero())
+        );
+    }
+
+    #[test]
+    fn mul_predicate_is_zero_on_add_layer() {
+        let (layer0, layer1, _) = target_layers();
+
+        assert_eq!(
+            evaluate_mul_predicate(&layer0, &layer1, &[f(0)], &[f(0), f(0)], &[f(1), f(0)]),
+            Ok(F::zero())
+        );
+    }
+
+    #[test]
+    fn predicates_match_second_layer_boolean_points() {
+        let (_, layer1, layer2) = target_layers();
+
+        assert_eq!(
+            evaluate_mul_predicate(&layer1, &layer2, &[], &[f(0)], &[f(1)]),
+            Ok(f(1))
+        );
+
+        assert_eq!(
+            evaluate_add_predicate(&layer1, &layer2, &[], &[f(0)], &[f(1)]),
+            Ok(F::zero())
+        );
+    }
+
+    #[test]
+    fn predicates_are_zero_at_padded_gate_positions() {
+        let previous_layer = layer(vec![
+            Gate::Input { input_index: 0 },
+            Gate::Input { input_index: 1 },
+        ]);
+
+        let current_layer = layer(vec![
+            Gate::Add { left: 0, right: 1 },
+            Gate::Mul { left: 0, right: 1 },
+            Gate::Add { left: 1, right: 0 },
+        ]);
+
+        // Current layer has real width 3 and padded width 4.
+        // Padded gate index 3 is addressed by little-endian bits [1, 1].
+        let padded_gate_point = [f(1), f(1)];
+
+        assert_eq!(
+            evaluate_add_predicate(
+                &previous_layer,
+                &current_layer,
+                &padded_gate_point,
+                &[f(0)],
+                &[f(1)],
+            ),
+            Ok(F::zero())
+        );
+
+        assert_eq!(
+            evaluate_mul_predicate(
+                &previous_layer,
+                &current_layer,
+                &padded_gate_point,
+                &[f(0)],
+                &[f(1)],
+            ),
+            Ok(F::zero())
+        );
+    }
+
+    #[test]
+    fn add_predicate_interpolates_at_non_boolean_gate_point() {
+        let previous_layer = layer(vec![
+            Gate::Input { input_index: 0 },
+            Gate::Input { input_index: 1 },
+        ]);
+
+        let current_layer = layer(vec![
+            Gate::Add { left: 0, right: 1 },
+            Gate::Add { left: 1, right: 0 },
+        ]);
+
+        let r = f(3);
+
+        assert_eq!(
+            evaluate_add_predicate(&previous_layer, &current_layer, &[r], &[f(0)], &[f(1)]),
+            Ok(f(1) - r)
+        );
+
+        assert_eq!(
+            evaluate_add_predicate(&previous_layer, &current_layer, &[r], &[f(1)], &[f(0)]),
+            Ok(r)
+        );
+    }
+}
