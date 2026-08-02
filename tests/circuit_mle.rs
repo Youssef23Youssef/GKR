@@ -33,12 +33,7 @@ fn target_circuit() -> Circuit {
 fn circuit_layer_mles_match_boolean_points() {
     let circuit = target_circuit();
 
-    let inputs = vec![
-        F::from(2u64),
-        F::from(3u64),
-        F::from(5u64),
-        F::from(7u64),
-    ];
+    let inputs = vec![F::from(2u64), F::from(3u64), F::from(5u64), F::from(7u64)];
 
     let evaluation = circuit.evaluate(&inputs).unwrap();
     let layer_values = evaluation.layer_values();
@@ -133,12 +128,7 @@ fn padded_circuit_layer_mle_sees_padding_as_zero() {
 fn circuit_layer_mle_evaluates_at_non_boolean_point() {
     let circuit = target_circuit();
 
-    let inputs = vec![
-        F::from(2u64),
-        F::from(3u64),
-        F::from(5u64),
-        F::from(7u64),
-    ];
+    let inputs = vec![F::from(2u64), F::from(3u64), F::from(5u64), F::from(7u64)];
 
     let evaluation = circuit.evaluate(&inputs).unwrap();
     let layer_values = evaluation.layer_values();

@@ -171,6 +171,22 @@ impl Layer {
         })
     }
 
+    pub fn gates(&self) -> &[Gate] {
+        &self.gates
+    }
+
+    pub fn real_width(&self) -> usize {
+        self.real_width
+    }
+
+    pub fn padded_width(&self) -> usize {
+        self.padded_width
+    }
+
+    pub fn index_bits(&self) -> usize {
+        self.index_bits
+    }
+
     fn validate_metadata(&self, layer_index: usize) -> Result<(), CircuitError> {
         if self.real_width == 0 {
             return Err(CircuitError::EmptyLayer);
@@ -735,19 +751,11 @@ mod tests {
         )
         .unwrap();
 
-        let inputs = vec![
-            F::from(2u64),
-            F::from(3u64),
-            F::from(5u64),
-            F::from(7u64),
-        ];
+        let inputs = vec![F::from(2u64), F::from(3u64), F::from(5u64), F::from(7u64)];
 
         let evaluation = circuit.evaluate(&inputs).unwrap();
 
-        assert_eq!(
-            evaluation.outputs(),
-            &[F::from(5u64), F::from(35u64)]
-        );
+        assert_eq!(evaluation.outputs(), &[F::from(5u64), F::from(35u64)]);
     }
 
     // Test Circuit Evaluation

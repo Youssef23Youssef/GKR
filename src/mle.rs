@@ -33,15 +33,22 @@ pub enum MleError {
 
     /// MLE evaluation tables are indexed by Boolean hypercubes, so their length
     /// must be exactly `2^num_vars`.
-    EvaluationTableLengthNotPowerOfTwo { len: usize },
+    EvaluationTableLengthNotPowerOfTwo {
+        len: usize,
+    },
 
     /// The requested vector index cannot be represented with the given number
     /// of Boolean bits.
-    IndexOutOfRange { index: usize, num_bits: usize },
+    IndexOutOfRange {
+        index: usize,
+        num_bits: usize,
+    },
 
     /// The requested number of Boolean variables is too large to safely map
     /// into a `usize` index on this machine.
-    TooManyVariables { num_bits: usize },
+    TooManyVariables {
+        num_bits: usize,
+    },
 
     PointLengthMismatch {
         expected: usize,
@@ -173,11 +180,7 @@ pub fn eq(point: &[F], bits: &[bool]) -> Result<F, MleError> {
     let mut result = F::one();
 
     for (x_i, b_i) in point.iter().zip(bits.iter()) {
-        let factor = if *b_i {
-            *x_i
-        } else {
-            one - *x_i
-        };
+        let factor = if *b_i { *x_i } else { one - *x_i };
 
         result *= factor;
     }
@@ -305,12 +308,7 @@ pub fn affine_line(p0: &[F], p1: &[F], t: F) -> Result<Vec<F>, MleError> {
 ///
 /// This is the line-restriction step used later in GKR to combine two child
 /// claims into one next-layer claim.
-pub fn evaluate_mle_on_line(
-    values: &[F],
-    p0: &[F],
-    p1: &[F],
-    t: F,
-) -> Result<F, MleError> {
+pub fn evaluate_mle_on_line(values: &[F], p0: &[F], p1: &[F], t: F) -> Result<F, MleError> {
     let point = affine_line(p0, p1, t)?;
 
     evaluate_mle(values, &point)
@@ -391,7 +389,7 @@ mod tests {
         }
     }
 
-    // `eq()` tests 
+    // `eq()` tests
 
     #[test]
     fn eq_of_empty_points_is_one() {
@@ -465,12 +463,7 @@ mod tests {
 
     #[test]
     fn evaluate_mle_matches_two_variable_boolean_points() {
-        let values = vec![
-            F::from(2u64),
-            F::from(3u64),
-            F::from(5u64),
-            F::from(7u64),
-        ];
+        let values = vec![F::from(2u64), F::from(3u64), F::from(5u64), F::from(7u64)];
 
         assert_eq!(
             evaluate_mle(&values, &[F::zero(), F::zero()]),
@@ -492,12 +485,7 @@ mod tests {
 
     #[test]
     fn evaluate_mle_rejects_point_length_mismatch() {
-        let values = vec![
-            F::from(2u64),
-            F::from(3u64),
-            F::from(5u64),
-            F::from(7u64),
-        ];
+        let values = vec![F::from(2u64), F::from(3u64), F::from(5u64), F::from(7u64)];
 
         assert_eq!(
             evaluate_mle(&values, &[F::from(9u64)]),
@@ -532,12 +520,7 @@ mod tests {
 
     #[test]
     fn bind_variable_at_zero_selects_even_indices() {
-        let values = vec![
-            F::from(2u64),
-            F::from(3u64),
-            F::from(5u64),
-            F::from(7u64),
-        ];
+        let values = vec![F::from(2u64), F::from(3u64), F::from(5u64), F::from(7u64)];
 
         assert_eq!(
             bind_variable(&values, F::zero()),
@@ -547,12 +530,7 @@ mod tests {
 
     #[test]
     fn bind_variable_at_one_selects_odd_indices() {
-        let values = vec![
-            F::from(2u64),
-            F::from(3u64),
-            F::from(5u64),
-            F::from(7u64),
-        ];
+        let values = vec![F::from(2u64), F::from(3u64), F::from(5u64), F::from(7u64)];
 
         assert_eq!(
             bind_variable(&values, F::one()),
@@ -562,12 +540,7 @@ mod tests {
 
     #[test]
     fn bind_variable_interpolates_adjacent_pairs() {
-        let values = vec![
-            F::from(2u64),
-            F::from(3u64),
-            F::from(5u64),
-            F::from(7u64),
-        ];
+        let values = vec![F::from(2u64), F::from(3u64), F::from(5u64), F::from(7u64)];
         let r = F::from(11u64);
 
         let expected = vec![
@@ -645,12 +618,7 @@ mod tests {
 
     #[test]
     fn evaluate_mle_on_line_at_zero_matches_first_endpoint_evaluation() {
-        let values = vec![
-            F::from(2u64),
-            F::from(3u64),
-            F::from(5u64),
-            F::from(7u64),
-        ];
+        let values = vec![F::from(2u64), F::from(3u64), F::from(5u64), F::from(7u64)];
 
         let p0 = vec![F::zero(), F::zero()];
         let p1 = vec![F::one(), F::one()];
@@ -663,12 +631,7 @@ mod tests {
 
     #[test]
     fn evaluate_mle_on_line_at_one_matches_second_endpoint_evaluation() {
-        let values = vec![
-            F::from(2u64),
-            F::from(3u64),
-            F::from(5u64),
-            F::from(7u64),
-        ];
+        let values = vec![F::from(2u64), F::from(3u64), F::from(5u64), F::from(7u64)];
 
         let p0 = vec![F::zero(), F::zero()];
         let p1 = vec![F::one(), F::one()];
@@ -681,12 +644,7 @@ mod tests {
 
     #[test]
     fn evaluate_mle_on_line_matches_evaluate_mle_at_line_point() {
-        let values = vec![
-            F::from(2u64),
-            F::from(3u64),
-            F::from(5u64),
-            F::from(7u64),
-        ];
+        let values = vec![F::from(2u64), F::from(3u64), F::from(5u64), F::from(7u64)];
 
         let p0 = vec![F::zero(), F::zero()];
         let p1 = vec![F::one(), F::one()];
