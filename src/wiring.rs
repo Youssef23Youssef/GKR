@@ -24,7 +24,7 @@
 use crate::{
     circuit::{Gate, Layer},
     field::F,
-    mle::{MleError, eq, index_to_bits},
+    mle::{MleError, eq, evaluate_mle, index_to_bits},
 };
 use ark_ff::Zero;
 
@@ -36,6 +36,9 @@ pub enum WiringError {
 
     /// An input gate appeared in a layer being treated as a computation layer.
     InputGateInComputationLayer { gate: usize },
+
+    /// Previous-layer values do not match the previous layer's padded width.
+    PreviousValuesLengthMismatch { expected: usize, actual: usize },
 
     /// Error produced by the underlying MLE utilities.
     MleError(MleError),
@@ -128,40 +131,53 @@ fn evaluate_gate_predicate(
     Ok(result)
 }
 
-/// Public wrapper for Add wiring predicate `add_i(g, b, c)`.
-pub fn evaluate_add_predicate(
+/// Evaluates the GKR layer equation at `(g, b, c)`.
+///
+/// For a transition from `previous_layer` to `current_layer`, this computes:
+///
+/// ```text
+/// add_i(g,b,c) * (V_{i-1}(b) + V_{i-1}(c))
+///   + mul_i(g,b,c) * V_{i-1}(b) * V_{i-1}(c)
+/// ```
+///
+/// where `V_{i-1}` is the multilinear extension represented by
+/// `previous_values`.
+pub fn evaluate_layer_equation(
     previous_layer: &Layer,
     current_layer: &Layer,
+    previous_values: &[F],
     g_point: &[F],
     b_point: &[F],
     c_point: &[F],
 ) -> Result<F, WiringError> {
-    evaluate_gate_predicate(
+    if previous_values.len() != previous_layer.padded_width() {
+        return Err(WiringError::PreviousValuesLengthMismatch {
+            expected: previous_layer.padded_width(),
+            actual: previous_values.len(),
+        });
+    }
+
+    let add = evaluate_gate_predicate(
         previous_layer,
         current_layer,
         g_point,
         b_point,
         c_point,
         GateOperation::Add,
-    )
-}
-
-/// Public wrapper Mul wiring predicate `mul_i(g, b, c)`.
-pub fn evaluate_mul_predicate(
-    previous_layer: &Layer,
-    current_layer: &Layer,
-    g_point: &[F],
-    b_point: &[F],
-    c_point: &[F],
-) -> Result<F, WiringError> {
-    evaluate_gate_predicate(
+    )?;
+    let mul = evaluate_gate_predicate(
         previous_layer,
         current_layer,
         g_point,
         b_point,
         c_point,
         GateOperation::Mul,
-    )
+    )?;
+
+    let left_value = evaluate_mle(previous_values, b_point)?;
+    let right_value = evaluate_mle(previous_values, c_point)?;
+
+    Ok(add * (left_value + right_value) + mul * left_value * right_value)
 }
 
 #[cfg(test)]
@@ -200,17 +216,38 @@ mod tests {
         let (layer0, layer1, _) = target_layers();
 
         assert_eq!(
-            evaluate_add_predicate(&layer0, &layer1, &[f(0)], &[f(0), f(0)], &[f(1), f(0)]),
+            evaluate_gate_predicate(
+                &layer0,
+                &layer1,
+                &[f(0)],
+                &[f(0), f(0)],
+                &[f(1), f(0)],
+                GateOperation::Add,
+            ),
             Ok(f(1))
         );
 
         assert_eq!(
-            evaluate_add_predicate(&layer0, &layer1, &[f(1)], &[f(0), f(1)], &[f(1), f(1)]),
+            evaluate_gate_predicate(
+                &layer0,
+                &layer1,
+                &[f(1)],
+                &[f(0), f(1)],
+                &[f(1), f(1)],
+                GateOperation::Add,
+            ),
             Ok(f(1))
         );
 
         assert_eq!(
-            evaluate_add_predicate(&layer0, &layer1, &[f(0)], &[f(1), f(0)], &[f(0), f(0)]),
+            evaluate_gate_predicate(
+                &layer0,
+                &layer1,
+                &[f(0)],
+                &[f(1), f(0)],
+                &[f(0), f(0)],
+                GateOperation::Add,
+            ),
             Ok(F::zero())
         );
     }
@@ -220,7 +257,14 @@ mod tests {
         let (layer0, layer1, _) = target_layers();
 
         assert_eq!(
-            evaluate_mul_predicate(&layer0, &layer1, &[f(0)], &[f(0), f(0)], &[f(1), f(0)]),
+            evaluate_gate_predicate(
+                &layer0,
+                &layer1,
+                &[f(0)],
+                &[f(0), f(0)],
+                &[f(1), f(0)],
+                GateOperation::Mul,
+            ),
             Ok(F::zero())
         );
     }
@@ -230,12 +274,12 @@ mod tests {
         let (_, layer1, layer2) = target_layers();
 
         assert_eq!(
-            evaluate_mul_predicate(&layer1, &layer2, &[], &[f(0)], &[f(1)]),
+            evaluate_gate_predicate(&layer1, &layer2, &[], &[f(0)], &[f(1)], GateOperation::Mul,),
             Ok(f(1))
         );
 
         assert_eq!(
-            evaluate_add_predicate(&layer1, &layer2, &[], &[f(0)], &[f(1)]),
+            evaluate_gate_predicate(&layer1, &layer2, &[], &[f(0)], &[f(1)], GateOperation::Add,),
             Ok(F::zero())
         );
     }
@@ -258,23 +302,25 @@ mod tests {
         let padded_gate_point = [f(1), f(1)];
 
         assert_eq!(
-            evaluate_add_predicate(
+            evaluate_gate_predicate(
                 &previous_layer,
                 &current_layer,
                 &padded_gate_point,
                 &[f(0)],
                 &[f(1)],
+                GateOperation::Add,
             ),
             Ok(F::zero())
         );
 
         assert_eq!(
-            evaluate_mul_predicate(
+            evaluate_gate_predicate(
                 &previous_layer,
                 &current_layer,
                 &padded_gate_point,
                 &[f(0)],
                 &[f(1)],
+                GateOperation::Mul,
             ),
             Ok(F::zero())
         );
@@ -295,13 +341,95 @@ mod tests {
         let r = f(3);
 
         assert_eq!(
-            evaluate_add_predicate(&previous_layer, &current_layer, &[r], &[f(0)], &[f(1)]),
+            evaluate_gate_predicate(
+                &previous_layer,
+                &current_layer,
+                &[r],
+                &[f(0)],
+                &[f(1)],
+                GateOperation::Add,
+            ),
             Ok(f(1) - r)
         );
 
         assert_eq!(
-            evaluate_add_predicate(&previous_layer, &current_layer, &[r], &[f(1)], &[f(0)]),
+            evaluate_gate_predicate(
+                &previous_layer,
+                &current_layer,
+                &[r],
+                &[f(1)],
+                &[f(0)],
+                GateOperation::Add,
+            ),
             Ok(r)
+        );
+    }
+
+    #[test]
+    fn layer_equation_evaluates_add_gate_at_boolean_points() {
+        let (layer0, layer1, _) = target_layers();
+        let previous_values = vec![f(2), f(3), f(5), f(7)];
+
+        let value = evaluate_layer_equation(
+            &layer0,
+            &layer1,
+            &previous_values,
+            &[f(0)],
+            &[f(0), f(0)],
+            &[f(1), f(0)],
+        );
+
+        assert_eq!(value, Ok(f(5)));
+    }
+
+    #[test]
+    fn layer_equation_evaluates_mul_gate_at_boolean_points() {
+        let (_, layer1, layer2) = target_layers();
+        let previous_values = vec![f(5), f(12)];
+
+        let value =
+            evaluate_layer_equation(&layer1, &layer2, &previous_values, &[], &[f(0)], &[f(1)]);
+
+        assert_eq!(value, Ok(f(60)));
+    }
+
+    #[test]
+    fn layer_equation_returns_zero_for_wrong_wiring() {
+        let (layer0, layer1, _) = target_layers();
+        let previous_values = vec![f(2), f(3), f(5), f(7)];
+
+        let value = evaluate_layer_equation(
+            &layer0,
+            &layer1,
+            &previous_values,
+            &[f(0)],
+            &[f(1), f(0)],
+            &[f(0), f(0)],
+        );
+
+        assert_eq!(value, Ok(F::zero()));
+    }
+
+    #[test]
+    fn layer_equation_rejects_wrong_previous_values_length() {
+        let (layer0, layer1, _) = target_layers();
+        let previous_values = vec![f(2), f(3), f(5)];
+
+        let value = evaluate_layer_equation(
+            &layer0,
+            &layer1,
+            &previous_values,
+            &[f(0)],
+            &[f(0), f(0)],
+            &[f(1), f(0)],
+        );
+
+        assert_eq!(
+            value,
+            Err(WiringError::PreviousValuesLengthMismatch {
+                expected: 4,
+                actual: 3,
+            })
         );
     }
 }

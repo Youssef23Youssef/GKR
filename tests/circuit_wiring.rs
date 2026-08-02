@@ -2,7 +2,7 @@ use gkr::{
     circuit::{Circuit, Gate, Layer},
     field::F,
     mle::evaluate_mle,
-    wiring::{evaluate_add_predicate, evaluate_mul_predicate},
+    wiring::evaluate_layer_equation,
 };
 
 fn f(value: u64) -> F {
@@ -32,7 +32,7 @@ fn target_layers() -> (Layer, Layer, Layer) {
 }
 
 #[test]
-fn wiring_predicates_select_child_mles_for_add_gate() {
+fn layer_equation_matches_current_layer_mle_for_add_gate() {
     let (layer0, layer1, layer2) = target_layers();
     let circuit = Circuit::new(vec![layer0.clone(), layer1.clone(), layer2], 4).unwrap();
 
@@ -44,17 +44,12 @@ fn wiring_predicates_select_child_mles_for_add_gate() {
     let b = [f(0), f(0)];
     let c = [f(1), f(0)];
 
-    let add = evaluate_add_predicate(&layer0, &layer1, &g, &b, &c).unwrap();
-    let mul = evaluate_mul_predicate(&layer0, &layer1, &g, &b, &c).unwrap();
-
     let left = evaluate_mle(&layer_values[0], &b).unwrap();
     let right = evaluate_mle(&layer_values[0], &c).unwrap();
     let current = evaluate_mle(&layer_values[1], &g).unwrap();
+    let reconstructed =
+        evaluate_layer_equation(&layer0, &layer1, &layer_values[0], &g, &b, &c).unwrap();
 
-    let reconstructed = add * (left + right) + mul * left * right;
-
-    assert_eq!(add, f(1));
-    assert_eq!(mul, f(0));
     assert_eq!(left, f(2));
     assert_eq!(right, f(3));
     assert_eq!(reconstructed, current);
@@ -62,7 +57,7 @@ fn wiring_predicates_select_child_mles_for_add_gate() {
 }
 
 #[test]
-fn wiring_predicates_select_child_mles_for_mul_gate() {
+fn layer_equation_matches_current_layer_mle_for_mul_gate() {
     let (layer0, layer1, layer2) = target_layers();
     let circuit = Circuit::new(vec![layer0, layer1.clone(), layer2.clone()], 4).unwrap();
 
@@ -74,17 +69,12 @@ fn wiring_predicates_select_child_mles_for_mul_gate() {
     let b = [f(0)];
     let c = [f(1)];
 
-    let add = evaluate_add_predicate(&layer1, &layer2, &g, &b, &c).unwrap();
-    let mul = evaluate_mul_predicate(&layer1, &layer2, &g, &b, &c).unwrap();
-
     let left = evaluate_mle(&layer_values[1], &b).unwrap();
     let right = evaluate_mle(&layer_values[1], &c).unwrap();
     let current = evaluate_mle(&layer_values[2], &g).unwrap();
+    let reconstructed =
+        evaluate_layer_equation(&layer1, &layer2, &layer_values[1], &g, &b, &c).unwrap();
 
-    let reconstructed = add * (left + right) + mul * left * right;
-
-    assert_eq!(add, f(0));
-    assert_eq!(mul, f(1));
     assert_eq!(left, f(5));
     assert_eq!(right, f(12));
     assert_eq!(reconstructed, current);
@@ -92,7 +82,7 @@ fn wiring_predicates_select_child_mles_for_mul_gate() {
 }
 
 #[test]
-fn wrong_wiring_has_zero_predicate_even_with_valid_layer_mles() {
+fn wrong_wiring_has_zero_contribution_even_with_valid_layer_mles() {
     let (layer0, layer1, layer2) = target_layers();
     let circuit = Circuit::new(vec![layer0.clone(), layer1.clone(), layer2], 4).unwrap();
 
@@ -104,15 +94,12 @@ fn wrong_wiring_has_zero_predicate_even_with_valid_layer_mles() {
     let wrong_b = [f(1), f(0)];
     let wrong_c = [f(0), f(0)];
 
-    let add = evaluate_add_predicate(&layer0, &layer1, &g, &wrong_b, &wrong_c).unwrap();
-    let mul = evaluate_mul_predicate(&layer0, &layer1, &g, &wrong_b, &wrong_c).unwrap();
-
     let left = evaluate_mle(&layer_values[0], &wrong_b).unwrap();
     let right = evaluate_mle(&layer_values[0], &wrong_c).unwrap();
-    let contribution = add * (left + right) + mul * left * right;
+    let contribution =
+        evaluate_layer_equation(&layer0, &layer1, &layer_values[0], &g, &wrong_b, &wrong_c)
+            .unwrap();
 
-    assert_eq!(add, f(0));
-    assert_eq!(mul, f(0));
     assert_eq!(left, f(3));
     assert_eq!(right, f(2));
     assert_eq!(contribution, f(0));
