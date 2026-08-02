@@ -1,78 +1,51 @@
+//! Multilinear extension utilities.
+//!
+//! This module provides the core polynomial utilities used by the circuit,
+//! wiring, Sumcheck, and GKR layers. Evaluation tables use little-endian
+//! Boolean indexing: the first variable is the least-significant bit of the
+//! table index.
+//!
+//! For example, with two variables:
+//!
+//! ```text
+//! index 0 -> [false, false]
+//! index 1 -> [true,  false]
+//! index 2 -> [false, true ]
+//! index 3 -> [true,  true ]
+//! ```
+//!
+//! This convention also determines variable binding: binding `x_0 = r` folds
+//! adjacent pairs as `(1 - r) * old[2j] + r * old[2j + 1]`.
+
 use crate::field::F;
 use ark_ff::{One, Zero};
 
-// Multilinear-extension utilities.
-//
-// This module starts with the indexing convention that every later MLE,
-// wiring-predicate, Sumcheck, and GKR function must agree on.
-//
-// We use **little-endian Boolean indexing**:
-//
-// ```text
-// index 0 -> [false, false]  // 00₂
-// index 1 -> [true,  false]  // 01₂
-// index 2 -> [false, true ]  // 10₂
-// index 3 -> [true,  true ]  // 11₂
-// ```
-//
-// In other words, the first Boolean variable is the least-significant bit of
-// the vector index. This matches the folding rule we will use later for MLEs:
-//
-// ```text
-// bind x₀ = r:
-// new[j] = (1 - r) * old[2j] + r * old[2j + 1]
-//```
-//
-// Being explicit here matters because a mismatched bit order would make layer
-// MLEs and wiring predicates silently disagree.
-
+/// Errors produced by multilinear extension utilities.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MleError {
-    /// MLE evaluation tables must contain at least one value.
+    /// Evaluation tables must contain at least one value.
     EmptyEvaluationTable,
 
-    /// MLE evaluation tables are indexed by Boolean hypercubes, so their length
-    /// must be exactly `2^num_vars`.
-    EvaluationTableLengthNotPowerOfTwo {
-        len: usize,
-    },
+    /// Evaluation table length must be a Boolean-hypercube size, `2^n`.
+    EvaluationTableLengthNotPowerOfTwo { len: usize },
 
-    /// The requested vector index cannot be represented with the given number
-    /// of Boolean bits.
-    IndexOutOfRange {
-        index: usize,
-        num_bits: usize,
-    },
+    /// An index is outside the Boolean hypercube for the requested bit length.
+    IndexOutOfRange { index: usize, num_bits: usize },
 
-    /// The requested number of Boolean variables is too large to safely map
-    /// into a `usize` index on this machine.
-    TooManyVariables {
-        num_bits: usize,
-    },
+    /// The requested number of variables cannot be represented safely by `usize`.
+    TooManyVariables { num_bits: usize },
 
-    PointLengthMismatch {
-        expected: usize,
-        actual: usize,
-    },
+    /// A point has the wrong number of coordinates.
+    PointLengthMismatch { expected: usize, actual: usize },
+
+    /// A constant evaluation table has no variable left to bind.
     NoVariablesToBind,
 }
 
-/// Return the number of Boolean variables needed for an evaluation table.
+/// Returns the number of Boolean variables represented by an evaluation table.
 ///
-/// A multilinear polynomial in `n` variables has one value for every Boolean
-/// point in `{0,1}^n`, so its evaluation table must have length `2^n`.
-///
-/// Examples:
-///
-/// ```text
-/// len = 1 -> 0 variables
-/// len = 2 -> 1 variable
-/// len = 4 -> 2 variables
-/// len = 8 -> 3 variables
-/// ```
-///
-/// The `len = 1` case is important: the output layer of the basic GKR circuit
-/// has one value, so its layer MLE is a constant polynomial with zero variables.
+/// The table length must be a power of two. A length-one table represents a
+/// constant polynomial with zero variables.
 pub fn num_vars_for_len(len: usize) -> Result<usize, MleError> {
     if len == 0 {
         return Err(MleError::EmptyEvaluationTable);
@@ -85,22 +58,9 @@ pub fn num_vars_for_len(len: usize) -> Result<usize, MleError> {
     Ok(len.trailing_zeros() as usize)
 }
 
-/// Convert a vector index into little-endian Boolean bits.
+/// Converts a table index into little-endian Boolean bits.
 ///
-/// The returned vector always has exactly `num_bits` entries. Bit position `0`
-/// corresponds to the least-significant bit of `index`.
-///
-/// Examples with `num_bits = 2`:
-///
-/// ```text
-/// index 0 -> [false, false]
-/// index 1 -> [true,  false]
-/// index 2 -> [false, true ]
-/// index 3 -> [true,  true ]
-/// ```
-///
-/// `index` must be less than `2^num_bits`; otherwise the index is outside the
-/// Boolean hypercube described by `num_bits` variables.
+/// The returned vector has exactly `num_bits` entries.
 pub fn index_to_bits(index: usize, num_bits: usize) -> Result<Vec<bool>, MleError> {
     if num_bits > usize::BITS as usize {
         return Err(MleError::TooManyVariables { num_bits });
@@ -121,18 +81,7 @@ pub fn index_to_bits(index: usize, num_bits: usize) -> Result<Vec<bool>, MleErro
     Ok(bits)
 }
 
-/// Convert little-endian Boolean bits back into a vector index.
-///
-/// This is the inverse of `index_to_bits` for valid inputs.
-///
-/// Examples:
-///
-/// ```text
-/// [false, false] -> 0
-/// [true,  false] -> 1
-/// [false, true ] -> 2
-/// [true,  true ] -> 3
-/// ```
+/// Converts little-endian Boolean bits into a table index.
 pub fn bits_to_index(bits: &[bool]) -> Result<usize, MleError> {
     if bits.len() > usize::BITS as usize {
         return Err(MleError::TooManyVariables {
@@ -151,22 +100,10 @@ pub fn bits_to_index(bits: &[bool]) -> Result<usize, MleError> {
     Ok(index)
 }
 
-/// Evaluates the multilinear equality polynomial at `(point, bits)`.
+/// Evaluates the multilinear equality polynomial `eq(point, bits)`.
 ///
-/// The input `point` is a field point `x ∈ F^n`, while `bits` is a Boolean
-/// hypercube point `b ∈ {0,1}^n`.
-///
-/// The polynomial is defined as:
-///
-/// ```text
-/// eq(x, b) = ∏ᵢ (bᵢ xᵢ + (1 - bᵢ)(1 - xᵢ))
-/// ```
-///
-/// Since each `bᵢ` is Boolean, each factor is either `xᵢ` when `bᵢ = 1`,
-/// or `1 - xᵢ` when `bᵢ = 0`.
-///
-/// On Boolean inputs, `eq` acts as an indicator polynomial: it evaluates to
-/// `1` when the two Boolean points are equal, and `0` otherwise.
+/// On Boolean inputs, this acts as an indicator: it is `1` when `point` equals
+/// `bits`, and `0` otherwise.
 pub fn eq(point: &[F], bits: &[bool]) -> Result<F, MleError> {
     if point.len() != bits.len() {
         return Err(MleError::PointLengthMismatch {
@@ -188,18 +125,9 @@ pub fn eq(point: &[F], bits: &[bool]) -> Result<F, MleError> {
     Ok(result)
 }
 
-/// Evaluates the multilinear extension defined by a Boolean-hypercube table.
+/// Evaluates the multilinear extension represented by a Boolean-hypercube table.
 ///
-/// `values` contains the evaluations of a multilinear polynomial over
-/// `{0,1}^n`, using this module's little-endian indexing convention.
-///
-/// Given a field point `point ∈ F^n`, this computes:
-///
-/// ```text
-/// Ṽ(point) = Σ_b values[b] · eq(point, b)
-/// ```
-///
-/// where the sum ranges over all Boolean points `b ∈ {0,1}^n`.
+/// `values` uses this module's little-endian indexing convention.
 pub fn evaluate_mle(values: &[F], point: &[F]) -> Result<F, MleError> {
     let num_vars = num_vars_for_len(values.len())?;
 
@@ -222,27 +150,10 @@ pub fn evaluate_mle(values: &[F], point: &[F]) -> Result<F, MleError> {
     Ok(result)
 }
 
-/// Binds the first variable of an MLE evaluation table to `r`.
+/// Binds the first variable `x_0` of an evaluation table to `r`.
 ///
-/// The table uses little-endian indexing, so the first variable `x₀` is the
-/// least-significant index bit. Therefore, entries that differ only in `x₀`
-/// are adjacent:
-///
-/// ```text
-/// old[0] with old[1]
-/// old[2] with old[3]
-/// old[4] with old[5]
-/// ...
-/// ```
-///
-/// For each pair, this computes the one-variable interpolation:
-///
-/// ```text
-/// new[j] = (1 - r) * old[2j] + r * old[2j + 1]
-/// ```
-///
-/// The returned table has half the length and represents the original MLE with
-/// `x₀` fixed to `r`.
+/// With little-endian indexing, this folds adjacent pairs as
+/// `(1 - r) * old[2j] + r * old[2j + 1]`.
 pub fn bind_variable(values: &[F], r: F) -> Result<Vec<F>, MleError> {
     let num_vars = num_vars_for_len(values.len())?;
 
@@ -263,22 +174,10 @@ pub fn bind_variable(values: &[F], r: F) -> Result<Vec<F>, MleError> {
     Ok(bound_values)
 }
 
-/// Evaluates the affine line through `p0` and `p1` at parameter `t`.
+/// Evaluates the affine line from `p0` to `p1` at parameter `t`.
 ///
-/// The line is defined coordinate-wise as:
-///
-/// ```text
-/// line(t) = p0 + t · (p1 - p0)
-/// ```
-///
-/// Therefore:
-///
-/// ```text
-/// line(0) = p0
-/// line(1) = p1
-/// ```
-///
-/// Both endpoints must have the same dimension.
+/// The line is `p0 + t * (p1 - p0)`, so `t = 0` gives `p0` and `t = 1` gives
+/// `p1`.
 pub fn affine_line(p0: &[F], p1: &[F], t: F) -> Result<Vec<F>, MleError> {
     if p0.len() != p1.len() {
         return Err(MleError::PointLengthMismatch {
@@ -296,18 +195,10 @@ pub fn affine_line(p0: &[F], p1: &[F], t: F) -> Result<Vec<F>, MleError> {
     Ok(point)
 }
 
-/// Evaluates an MLE restricted to the affine line through `p0` and `p1`.
+/// Evaluates an MLE on the affine line from `p0` to `p1`.
 ///
-/// This computes:
-///
-/// ```text
-/// q(t) = Ṽ(p0 + t · (p1 - p0))
-/// ```
-///
-/// where `Ṽ` is the multilinear extension represented by `values`.
-///
-/// This is the line-restriction step used later in GKR to combine two child
-/// claims into one next-layer claim.
+/// This computes `Ṽ(p0 + t * (p1 - p0))`, the line restriction used later by
+/// GKR to combine two child claims into one next-layer claim.
 pub fn evaluate_mle_on_line(values: &[F], p0: &[F], p1: &[F], t: F) -> Result<F, MleError> {
     let point = affine_line(p0, p1, t)?;
 
@@ -318,7 +209,7 @@ pub fn evaluate_mle_on_line(values: &[F], p0: &[F], p1: &[F], t: F) -> Result<F,
 mod tests {
     use super::*;
 
-    // Helpers tests
+    // Indexing and table-shape tests
 
     #[test]
     fn num_vars_for_len_accepts_power_of_two_lengths() {
